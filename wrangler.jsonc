@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "webapp",
+  "name": "task-calendar",
   "compatibility_date": "2025-08-21",
   "pages_build_output_dir": "./dist",
   "compatibility_flags": [
@@ -24,8 +24,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "task-calendar-db",
-      "database_id": "local-dev-database-id"
+      "database_name": "task-calendar-production",
+      "database_id": "a4e68fa1-ba88-4fc1-a2e2-2eaab0374235"
     }
   ],
   // "ai": {
