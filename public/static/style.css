@@ -62,3 +62,49 @@
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   transform: translateY(-1px);
 }
+
+/* ドラッグ&ドロップ関連スタイル */
+.task-item {
+  transition: all 0.2s ease-in-out;
+}
+
+.task-item:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.task-item.dragging {
+  opacity: 0.5;
+  transform: rotate(2deg);
+}
+
+.drag-handle {
+  touch-action: none;
+}
+
+.drag-handle:hover {
+  color: #4f46e5;
+}
+
+/* チェックボックスのスタイル */
+.task-checkbox {
+  cursor: pointer;
+}
+
+.task-checkbox:checked + .task-content {
+  opacity: 0.6;
+}
+
+/* タスク編集フォームのスタイル */
+.task-edit-form input,
+.task-edit-form select {
+  border: 1px solid #d1d5db;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+}
+
+.task-edit-form input:focus,
+.task-edit-form select:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}

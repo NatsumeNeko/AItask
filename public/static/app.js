@@ -270,43 +270,105 @@ class TaskCalendar {
       return;
     }
 
-    let html = '';
-    this.tasks.forEach(task => {
+    let html = '<div id="sortable-tasks" class="space-y-2">';
+    this.tasks.forEach((task, index) => {
       const priorityIcon = this.getPriorityIcon(task.priority);
-      const statusIcon = this.getStatusIcon(task.status);
       const isOverdue = new Date(task.deadline) < new Date() && task.status !== 'completed';
       
       html += `
-        <div class="border-b last:border-b-0 py-3 ${isOverdue ? 'bg-red-50' : ''}">
-          <div class="flex justify-between items-start">
-            <div class="flex-1">
-              <h4 class="font-semibold ${task.status === 'completed' ? 'line-through text-gray-500' : ''}">${task.name}</h4>
-              <div class="flex items-center space-x-2 mt-1 text-sm text-gray-600">
-                <span>${priorityIcon} ${task.priority}</span>
-                <span>📅 ${this.formatDate(task.deadline)}</span>
-                <span>⏱️ ${task.estimated_duration}分</span>
-              </div>
-              ${isOverdue ? '<span class="text-red-600 text-xs font-semibold">⚠️ 期限超過</span>' : ''}
+        <div class="task-item border rounded-lg p-3 bg-white shadow-sm cursor-move ${isOverdue ? 'border-red-300 bg-red-50' : ''} ${task.status === 'completed' ? 'opacity-60' : ''}" 
+             data-task-id="${task.id}" 
+             draggable="true">
+          <div class="flex items-start space-x-3">
+            <!-- ドラッグハンドル -->
+            <div class="drag-handle text-gray-400 hover:text-gray-600 cursor-move pt-1">
+              <span class="text-lg">≡</span>
             </div>
-            <div class="flex items-center space-x-2">
-              <span>${statusIcon}</span>
+            
+            <!-- チェックボックス -->
+            <div class="flex items-center pt-1">
+              <input type="checkbox" 
+                     class="task-checkbox w-5 h-5 text-blue-600 rounded focus:ring-blue-500" 
+                     ${task.status === 'completed' ? 'checked' : ''}
+                     onchange="app.toggleTaskStatus(${task.id})">
+            </div>
+            
+            <!-- タスク情報 -->
+            <div class="flex-1 min-w-0">
+              <div class="task-content" id="task-content-${task.id}">
+                <h4 class="font-semibold ${task.status === 'completed' ? 'line-through text-gray-500' : ''} break-words">
+                  ${task.name}
+                </h4>
+                <div class="flex items-center space-x-2 mt-1 text-sm text-gray-600 flex-wrap">
+                  <span>${priorityIcon} ${task.priority}</span>
+                  <span>📅 ${this.formatDate(task.deadline)}</span>
+                  <span>⏱️ ${task.estimated_duration}分</span>
+                </div>
+                ${isOverdue ? '<div class="text-red-600 text-xs font-semibold mt-1">⚠️ 期限超過</div>' : ''}
+              </div>
+              
+              <!-- 編集フォーム（非表示） -->
+              <div class="task-edit-form hidden" id="task-edit-form-${task.id}">
+                <div class="space-y-2">
+                  <input type="text" 
+                         value="${task.name}" 
+                         class="task-name-input w-full p-2 border rounded text-sm"
+                         placeholder="タスク名">
+                  <div class="flex space-x-2">
+                    <select class="task-priority-input p-2 border rounded text-sm">
+                      <option value="高い" ${task.priority === '高い' ? 'selected' : ''}>🔴 高い</option>
+                      <option value="中" ${task.priority === '中' ? 'selected' : ''}>🟡 中</option>
+                      <option value="低い" ${task.priority === '低い' ? 'selected' : ''}>🟢 低い</option>
+                    </select>
+                    <input type="date" 
+                           value="${task.deadline}" 
+                           class="task-deadline-input p-2 border rounded text-sm">
+                    <input type="number" 
+                           value="${task.estimated_duration}" 
+                           min="1"
+                           class="task-duration-input w-20 p-2 border rounded text-sm"
+                           placeholder="分">
+                  </div>
+                  <div class="flex space-x-2">
+                    <button onclick="app.saveTaskEdit(${task.id})" 
+                            class="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
+                      保存
+                    </button>
+                    <button onclick="app.cancelTaskEdit(${task.id})" 
+                            class="px-3 py-1 bg-gray-500 text-white rounded text-sm hover:bg-gray-600">
+                      キャンセル
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- アクションボタン -->
+            <div class="flex flex-col space-y-1">
               ${task.status === 'pending' ? 
-                `<button onclick="app.startStopwatch(${task.id}, '${task.name}', ${task.estimated_duration})" class="text-green-600 hover:text-green-800 text-sm">
-                  ⏱️ 開始
-                </button>` : ''}
-              <button onclick="app.toggleTaskStatus(${task.id})" class="text-blue-600 hover:text-blue-800 text-sm">
-                ${task.status === 'completed' ? '元に戻す' : '完了'}
+                `<button onclick="app.startStopwatch(${task.id}, '${task.name}', ${task.estimated_duration})" 
+                         class="text-green-600 hover:text-green-800 text-sm px-2 py-1 rounded hover:bg-green-50">
+                    ⏱️
+                  </button>` : ''}
+              <button onclick="app.editTask(${task.id})" 
+                      class="text-blue-600 hover:text-blue-800 text-sm px-2 py-1 rounded hover:bg-blue-50">
+                ✏️
               </button>
-              <button onclick="app.deleteTask(${task.id})" class="text-red-600 hover:text-red-800 text-sm">
-                削除
+              <button onclick="app.deleteTask(${task.id})" 
+                      class="text-red-600 hover:text-red-800 text-sm px-2 py-1 rounded hover:bg-red-50">
+                🗑️
               </button>
             </div>
           </div>
         </div>
       `;
     });
-
+    
+    html += '</div>';
     taskListElement.innerHTML = html;
+    
+    // ドラッグ&ドロップ機能を初期化
+    this.initializeDragAndDrop();
   }
 
   showTaskModal() {
@@ -511,6 +573,208 @@ class TaskCalendar {
     return date.getFullYear() + '-' + 
            (date.getMonth() + 1).toString().padStart(2, '0') + '-' + 
            date.getDate().toString().padStart(2, '0');
+  }
+
+  // ドラッグ&ドロップ機能の初期化（デスクトップ＋モバイル対応）
+  initializeDragAndDrop() {
+    const taskContainer = document.getElementById('sortable-tasks');
+    if (!taskContainer) return;
+
+    let draggedElement = null;
+    let draggedIndex = null;
+    let touchStartY = 0;
+    let touchElement = null;
+
+    // タスクアイテムにイベントを追加
+    const taskItems = taskContainer.querySelectorAll('.task-item');
+    taskItems.forEach((item, index) => {
+      // デスクトップ用ドラッグ
+      item.addEventListener('dragstart', (e) => {
+        draggedElement = item;
+        draggedIndex = index;
+        item.style.opacity = '0.5';
+        e.dataTransfer.effectAllowed = 'move';
+      });
+
+      item.addEventListener('dragend', (e) => {
+        item.style.opacity = '1';
+        draggedElement = null;
+        draggedIndex = null;
+      });
+
+      item.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+      });
+
+      item.addEventListener('drop', (e) => {
+        e.preventDefault();
+        if (draggedElement && draggedElement !== item) {
+          const dropIndex = Array.from(taskContainer.children).indexOf(item);
+          this.reorderTasks(draggedIndex, dropIndex);
+        }
+      });
+
+      // モバイル用タッチ
+      item.addEventListener('touchstart', (e) => {
+        touchStartY = e.touches[0].clientY;
+        touchElement = item;
+        draggedIndex = index;
+        item.style.opacity = '0.8';
+      }, { passive: true });
+
+      item.addEventListener('touchmove', (e) => {
+        if (!touchElement) return;
+        
+        const touch = e.touches[0];
+        const currentY = touch.clientY;
+        const deltaY = currentY - touchStartY;
+        
+        // 移動距離が十分な場合のみドラッグ扱い
+        if (Math.abs(deltaY) > 20) {
+          e.preventDefault();
+          touchElement.style.transform = `translateY(${deltaY}px)`;
+          
+          // ドロップ先を判定
+          const elementBelow = document.elementFromPoint(touch.clientX, touch.clientY);
+          const dropTarget = elementBelow?.closest('.task-item');
+          
+          if (dropTarget && dropTarget !== touchElement) {
+            const allItems = Array.from(taskContainer.children);
+            const dropIndex = allItems.indexOf(dropTarget);
+            
+            // ビジュアルフィードバック
+            allItems.forEach(el => el.style.borderTop = '');
+            if (deltaY > 0) {
+              dropTarget.style.borderBottom = '2px solid #3b82f6';
+            } else {
+              dropTarget.style.borderTop = '2px solid #3b82f6';
+            }
+          }
+        }
+      }, { passive: false });
+
+      item.addEventListener('touchend', (e) => {
+        if (!touchElement) return;
+        
+        const touch = e.changedTouches[0];
+        const elementBelow = document.elementFromPoint(touch.clientX, touch.clientY);
+        const dropTarget = elementBelow?.closest('.task-item');
+        
+        // スタイルをリセット
+        touchElement.style.opacity = '1';
+        touchElement.style.transform = '';
+        document.querySelectorAll('.task-item').forEach(el => {
+          el.style.borderTop = '';
+          el.style.borderBottom = '';
+        });
+        
+        if (dropTarget && dropTarget !== touchElement) {
+          const dropIndex = Array.from(taskContainer.children).indexOf(dropTarget);
+          this.reorderTasks(draggedIndex, dropIndex);
+        }
+        
+        touchElement = null;
+        touchStartY = 0;
+      });
+    });
+  }
+
+  // タスクの順序を変更
+  async reorderTasks(fromIndex, toIndex) {
+    if (fromIndex === toIndex) return;
+
+    // 配列内でタスクを移動
+    const taskToMove = this.tasks.splice(fromIndex, 1)[0];
+    this.tasks.splice(toIndex, 0, taskToMove);
+
+    // UIを更新
+    this.renderTaskList();
+
+    // サーバーに順序変更を送信（簡易実装）
+    try {
+      await this.saveTasks();
+    } catch (error) {
+      console.error('タスク順序の保存に失敗しました:', error);
+    }
+  }
+
+  // タスクの編集モードに切り替え
+  editTask(taskId) {
+    const contentDiv = document.getElementById(`task-content-${taskId}`);
+    const editForm = document.getElementById(`task-edit-form-${taskId}`);
+    
+    if (contentDiv && editForm) {
+      contentDiv.classList.add('hidden');
+      editForm.classList.remove('hidden');
+    }
+  }
+
+  // タスク編集をキャンセル
+  cancelTaskEdit(taskId) {
+    const contentDiv = document.getElementById(`task-content-${taskId}`);
+    const editForm = document.getElementById(`task-edit-form-${taskId}`);
+    
+    if (contentDiv && editForm) {
+      contentDiv.classList.remove('hidden');
+      editForm.classList.add('hidden');
+    }
+  }
+
+  // タスク編集を保存
+  async saveTaskEdit(taskId) {
+    const editForm = document.getElementById(`task-edit-form-${taskId}`);
+    if (!editForm) return;
+
+    const nameInput = editForm.querySelector('.task-name-input');
+    const priorityInput = editForm.querySelector('.task-priority-input');
+    const deadlineInput = editForm.querySelector('.task-deadline-input');
+    const durationInput = editForm.querySelector('.task-duration-input');
+
+    const updatedData = {
+      name: nameInput.value.trim(),
+      priority: priorityInput.value,
+      deadline: deadlineInput.value,
+      estimated_duration: parseInt(durationInput.value)
+    };
+
+    if (!updatedData.name || !updatedData.deadline || !updatedData.estimated_duration) {
+      alert('すべての項目を入力してください');
+      return;
+    }
+
+    try {
+      const task = this.tasks.find(t => t.id === taskId);
+      const response = await fetch(`/api/tasks/${taskId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...task,
+          ...updatedData
+        })
+      });
+
+      if (response.ok) {
+        await this.loadTasks();
+        await this.loadSchedules();
+        this.renderTaskList();
+        this.renderCalendar();
+        alert('✅ タスクが更新されました');
+      } else {
+        alert('❌ タスクの更新に失敗しました');
+      }
+    } catch (error) {
+      console.error('タスク更新エラー:', error);
+      alert('❌ エラーが発生しました');
+    }
+  }
+
+  // タスク配列の保存（簡易実装）
+  async saveTasks() {
+    // この機能は順序保存のため、実際のAPIが必要な場合は実装
+    console.log('タスク順序が変更されました:', this.tasks.map(t => t.name));
   }
 
   getTasksForDate(dateStr) {
