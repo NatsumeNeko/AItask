@@ -1,1 +1,64 @@
-h1 { font-family: Arial, Helvetica, sans-serif; }
+/* タスクカレンダーアプリ - カスタムスタイル */
+
+/* スムーズなアニメーション */
+* {
+  transition: all 0.2s ease-in-out;
+}
+
+/* カレンダーセルのホバー効果 */
+.calendar-cell:hover {
+  transform: scale(1.05);
+}
+
+/* モーダルの表示アニメーション */
+.modal-backdrop {
+  backdrop-filter: blur(4px);
+}
+
+/* タスク優先度の色分け */
+.priority-high {
+  border-left: 4px solid #ef4444;
+}
+
+.priority-medium {
+  border-left: 4px solid #f59e0b;
+}
+
+.priority-low {
+  border-left: 4px solid #10b981;
+}
+
+/* レスポンシブデザイン調整 */
+@media (max-width: 640px) {
+  .calendar-cell {
+    font-size: 0.875rem;
+  }
+  
+  .task-item {
+    padding: 0.75rem;
+  }
+}
+
+/* カスタムボタンスタイル */
+.btn-primary {
+  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+  box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.3);
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 12px -1px rgba(59, 130, 246, 0.4);
+}
+
+/* タスクカードのスタイル */
+.task-card {
+  background: white;
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease-in-out;
+}
+
+.task-card:hover {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+}
