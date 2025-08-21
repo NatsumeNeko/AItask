@@ -691,11 +691,35 @@ class TaskCalendar {
     // UIを更新
     this.renderTaskList();
 
-    // サーバーに順序変更を送信（簡易実装）
+    // サーバーに順序変更を送信
     try {
-      await this.saveTasks();
+      // 新しい順序配列を作成
+      const taskOrders = this.tasks.map((task, index) => ({
+        id: task.id,
+        order: index
+      }));
+
+      const response = await fetch('/api/tasks/reorder', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ taskOrders })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update task order');
+      }
+
+      console.log('タスク順序を更新しました');
+      
+      // カレンダーを再描画（スケジュールが変更された可能性があるため）
+      this.renderCalendar();
+      
     } catch (error) {
       console.error('タスク順序の保存に失敗しました:', error);
+      // エラーの場合は元の順序に戻す
+      this.loadTasks();
     }
   }
 

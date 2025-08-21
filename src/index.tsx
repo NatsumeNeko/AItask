@@ -23,7 +23,7 @@ app.get('/api/tasks', async (c) => {
   try {
     const { results } = await c.env.DB.prepare(`
       SELECT * FROM tasks 
-      ORDER BY 
+      ORDER BY display_order, 
         CASE priority 
           WHEN '高い' THEN 1 
           WHEN '中' THEN 2 
@@ -42,11 +42,18 @@ app.post('/api/tasks', async (c) => {
   try {
     const { name, priority, deadline, estimated_duration } = await c.req.json()
     
+    // 現在の最大display_orderを取得
+    const { results: maxOrderResult } = await c.env.DB.prepare(`
+      SELECT COALESCE(MAX(display_order), 0) as max_order FROM tasks
+    `).all()
+    
+    const nextOrder = (maxOrderResult[0]?.max_order || 0) + 1
+    
     // タスクを作成
     const result = await c.env.DB.prepare(`
-      INSERT INTO tasks (name, priority, deadline, estimated_duration)
-      VALUES (?, ?, ?, ?)
-    `).bind(name, priority, deadline, estimated_duration).run()
+      INSERT INTO tasks (name, priority, deadline, estimated_duration, display_order)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(name, priority, deadline, estimated_duration, nextOrder).run()
     
     if (result.success) {
       const taskId = result.meta.last_row_id
@@ -70,6 +77,39 @@ app.post('/api/tasks', async (c) => {
   }
 })
 
+// 全タスクを再スケジューリングする関数
+async function rescheduleAllTasks(db: D1Database) {
+  try {
+    // 1. 既存のタスクスケジュールを全て削除（デイリーワークは保持）
+    await db.prepare(`
+      DELETE FROM schedules WHERE task_id > 0
+    `).run()
+    
+    // 2. 全タスクを新しい順序で取得（display_order順）
+    const { results: tasks } = await db.prepare(`
+      SELECT * FROM tasks 
+      WHERE status != 'completed'
+      ORDER BY display_order, 
+        CASE priority 
+          WHEN '高い' THEN 1 
+          WHEN '中' THEN 2 
+          WHEN '低い' THEN 3 
+        END,
+        deadline
+    `).all()
+    
+    // 3. 各タスクを順番にスケジューリング
+    for (const task of tasks) {
+      await autoScheduleTask(db, task.id, task)
+    }
+    
+    console.log(`Rescheduled ${tasks.length} tasks in new order`)
+  } catch (error) {
+    console.error('Error rescheduling all tasks:', error)
+    throw error
+  }
+}
+
 // 自動スケジューリング関数
 async function autoScheduleTask(db: D1Database, taskId: number, task: any) {
   try {
@@ -90,7 +130,21 @@ async function autoScheduleTask(db: D1Database, taskId: number, task: any) {
     
     // 2. 期限から3日前までの期間を計算
     const deadline = new Date(task.deadline)
+    
+    // 動的スケジューリング開始日の決定
+    // 今日の17時を過ぎている場合は明日から、そうでなければ今日から開始
+    const now = new Date()
+    const today5PM = new Date()
+    today5PM.setHours(17, 0, 0, 0)
+    
     const startDate = new Date()
+    if (now > today5PM) {
+      // 17時を過ぎているので明日から開始
+      startDate.setDate(startDate.getDate() + 1)
+    }
+    // 時刻は00:00:00にリセット
+    startDate.setHours(0, 0, 0, 0)
+    
     const endDate = new Date(deadline)
     endDate.setDate(endDate.getDate() - 3) // 3日の余裕
     
@@ -301,6 +355,36 @@ app.put('/api/tasks/:id', async (c) => {
     }
   } catch (error) {
     return c.json({ error: 'Invalid task data' }, 400)
+  }
+})
+
+// タスク順序更新エンドポイント
+app.put('/api/tasks/reorder', async (c) => {
+  try {
+    const { taskOrders } = await c.req.json()
+    
+    // taskOrders配列の各要素は { id: taskId, order: newOrder } の形式
+    if (!Array.isArray(taskOrders)) {
+      return c.json({ error: 'Invalid task orders data' }, 400)
+    }
+    
+    // トランザクションで一括更新
+    const db = c.env.DB
+    
+    // すべてのタスクの順序を更新
+    for (const { id, order } of taskOrders) {
+      await db.prepare(`
+        UPDATE tasks SET display_order = ? WHERE id = ?
+      `).bind(order, id).run()
+    }
+    
+    // タスクの順序変更後、すべてのスケジュールを再作成
+    await rescheduleAllTasks(db)
+    
+    return c.json({ message: 'Task order updated successfully' })
+  } catch (error) {
+    console.error('Error updating task order:', error)
+    return c.json({ error: 'Failed to update task order' }, 500)
   }
 })
 
