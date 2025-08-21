@@ -1,8 +1,16 @@
 // タスクカレンダーアプリ - JavaScript
 
+// 日本時間（JST）用ヘルパー関数
+function getJSTDate() {
+  const now = new Date();
+  const jstOffset = 9 * 60; // JST is UTC+9
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  return new Date(utc + (jstOffset * 60000));
+}
+
 class TaskCalendar {
   constructor() {
-    this.currentDate = new Date();
+    this.currentDate = getJSTDate();
     this.selectedDate = null;
     this.tasks = [];
     this.schedules = [];
@@ -273,7 +281,7 @@ class TaskCalendar {
     let html = '<div id="sortable-tasks" class="space-y-2">';
     this.tasks.forEach((task, index) => {
       const priorityIcon = this.getPriorityIcon(task.priority);
-      const isOverdue = new Date(task.deadline) < new Date() && task.status !== 'completed';
+      const isOverdue = new Date(task.deadline) < getJSTDate() && task.status !== 'completed';
       
       html += `
         <div class="task-item border rounded-lg p-3 bg-white shadow-sm cursor-move ${isOverdue ? 'border-red-300 bg-red-50' : ''} ${task.status === 'completed' ? 'opacity-60' : ''}" 
@@ -564,8 +572,8 @@ class TaskCalendar {
 
   // ユーティリティメソッド
   isToday(date) {
-    const today = new Date();
-    return date.toDateString() === today.toDateString();
+    const jstToday = getJSTDate();
+    return date.toDateString() === jstToday.toDateString();
   }
 
   // 日付をYYYY-MM-DD形式に変換（タイムゾーン問題を避ける）

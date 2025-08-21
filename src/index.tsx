@@ -131,19 +131,16 @@ async function autoScheduleTask(db: D1Database, taskId: number, task: any) {
     // 2. 期限から3日前までの期間を計算
     const deadline = new Date(task.deadline)
     
-    // 動的スケジューリング開始日の決定
+    // 動的スケジューリング開始日の決定（JST基準）
     // 今日の17時を過ぎている場合は明日から、そうでなければ今日から開始
-    const now = new Date()
-    const today5PM = new Date()
-    today5PM.setHours(17, 0, 0, 0)
+    const jstNow = getJSTDate()
+    const jstToday5PM = getJSTToday5PM()
     
-    const startDate = new Date()
-    if (now > today5PM) {
+    const startDate = getJSTTodayMidnight()
+    if (jstNow > jstToday5PM) {
       // 17時を過ぎているので明日から開始
       startDate.setDate(startDate.getDate() + 1)
     }
-    // 時刻は00:00:00にリセット
-    startDate.setHours(0, 0, 0, 0)
     
     const endDate = new Date(deadline)
     endDate.setDate(endDate.getDate() - 3) // 3日の余裕
@@ -325,7 +322,31 @@ function minutesToTime(minutes: number): string {
   return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`
 }
 
-// 日付をYYYY-MM-DD形式に変換（タイムゾーン問題を避ける）
+// 日本時間（JST）を取得するヘルパー関数
+function getJSTDate(): Date {
+  const now = new Date()
+  const jstOffset = 9 * 60 // JST is UTC+9
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000)
+  return new Date(utc + (jstOffset * 60000))
+}
+
+// 日本時間で今日の17時を取得
+function getJSTToday5PM(): Date {
+  const jstNow = getJSTDate()
+  const today5PM = new Date(jstNow)
+  today5PM.setHours(17, 0, 0, 0)
+  return today5PM
+}
+
+// 日本時間で今日の00:00を取得
+function getJSTTodayMidnight(): Date {
+  const jstNow = getJSTDate()
+  const today = new Date(jstNow)
+  today.setHours(0, 0, 0, 0)
+  return today
+}
+
+// 日付をYYYY-MM-DD形式に変換（JST基準）
 function formatDateString(date: Date): string {
   return date.getFullYear() + '-' + 
          (date.getMonth() + 1).toString().padStart(2, '0') + '-' + 
@@ -577,11 +598,11 @@ async function scheduleAllDailyWork(DB: D1Database) {
     SELECT holiday_date, is_recurring FROM holidays
   `).all()
   
-  // 今日から30日間の平日にデイリーワークをスケジュール
-  const today = new Date()
+  // JST基準で今日から30日間の平日にデイリーワークをスケジュール
+  const jstToday = getJSTTodayMidnight()
   for (let i = 0; i < 30; i++) {
-    const date = new Date(today)
-    date.setDate(today.getDate() + i)
+    const date = new Date(jstToday)
+    date.setDate(jstToday.getDate() + i)
     const dateStr = formatDateString(date)
     
     // 土日をスキップ
@@ -624,7 +645,8 @@ async function rescheduleHolidayTasks(DB: D1Database) {
     
     if (holiday.is_recurring) {
       const holidayDate = new Date(holiday.holiday_date)
-      const currentYear = new Date().getFullYear()
+      const jstNow = getJSTDate()
+      const currentYear = jstNow.getFullYear()
       
       for (let year = currentYear; year <= currentYear + 1; year++) {
         const recurringDate = new Date(year, holidayDate.getMonth(), holidayDate.getDate())
