@@ -6,6 +6,8 @@ class TaskCalendar {
     this.selectedDate = null;
     this.tasks = [];
     this.schedules = [];
+    this.settings = {};
+    this.holidays = [];
     this.stopwatch = {
       taskId: null,
       taskName: '',
@@ -23,6 +25,8 @@ class TaskCalendar {
     this.renderCalendar();
     await this.loadTasks();
     await this.loadSchedules();
+    await this.loadSettings();
+    await this.loadHolidays();
     this.renderTaskList();
   }
 
@@ -41,6 +45,33 @@ class TaskCalendar {
     // タスク追加モーダル
     document.getElementById('addTaskBtn').addEventListener('click', () => {
       this.showTaskModal();
+    });
+
+    // 設定モーダル
+    document.getElementById('settingsBtn').addEventListener('click', () => {
+      this.showSettingsModal();
+    });
+
+    document.getElementById('closeSettingsModal').addEventListener('click', () => {
+      this.hideSettingsModal();
+    });
+
+    document.getElementById('saveSettingsBtn').addEventListener('click', () => {
+      this.saveSettings();
+    });
+
+    document.getElementById('cancelSettingsBtn').addEventListener('click', () => {
+      this.hideSettingsModal();
+    });
+
+    document.getElementById('addHolidayBtn').addEventListener('click', () => {
+      this.addHoliday();
+    });
+
+    document.getElementById('settingsModal').addEventListener('click', (e) => {
+      if (e.target.id === 'settingsModal') {
+        this.hideSettingsModal();
+      }
     });
 
     document.getElementById('cancelBtn').addEventListener('click', () => {
@@ -131,22 +162,30 @@ class TaskCalendar {
           cellClass += 'text-gray-400 ';
         }
 
-        // タスクやスケジュールがある日は背景色を変更
-        const schedulesOnDay = this.getSchedulesForDate(dateStr);
-        if (tasksOnDay.length > 0 || schedulesOnDay.length > 0) {
-          if (schedulesOnDay.length > 0) {
-            cellClass += 'bg-green-100 border border-green-300 '; // スケジュール済み
-          } else {
-            cellClass += 'bg-yellow-100 border border-yellow-300 '; // タスクのみ
+        // 休日チェック
+        const isHoliday = this.isHoliday(dateStr);
+        if (isHoliday && isCurrentMonth) {
+          cellClass += 'bg-red-100 border border-red-300 text-red-700 '; // 休日
+        } else {
+          // タスクやスケジュールがある日は背景色を変更
+          const schedulesOnDay = this.getSchedulesForDate(dateStr);
+          if (tasksOnDay.length > 0 || schedulesOnDay.length > 0) {
+            if (schedulesOnDay.length > 0) {
+              cellClass += 'bg-green-100 border border-green-300 '; // スケジュール済み
+            } else {
+              cellClass += 'bg-yellow-100 border border-yellow-300 '; // タスクのみ
+            }
           }
         }
 
         calendarHTML += `
           <div class="${cellClass}" onclick="app.showDayDetail('${dateStr}')">
             <span class="text-sm">${currentDate.getDate()}</span>
-            ${schedulesOnDay.length > 0 ? 
-              `<span class="text-xs text-green-600">📅${schedulesOnDay.length}</span>` : 
-              tasksOnDay.length > 0 ? `<span class="text-xs text-orange-600">●</span>` : ''}
+            ${isHoliday && isCurrentMonth ? 
+              `<span class="text-xs text-red-600">🚫</span>` :
+              schedulesOnDay.length > 0 ? 
+                `<span class="text-xs text-green-600">📅${schedulesOnDay.length}</span>` : 
+                tasksOnDay.length > 0 ? `<span class="text-xs text-orange-600">●</span>` : ''}
           </div>
         `;
 
@@ -177,6 +216,28 @@ class TaskCalendar {
     } catch (error) {
       console.error('スケジュールの読み込みに失敗しました:', error);
       this.schedules = [];
+    }
+  }
+
+  async loadSettings() {
+    try {
+      const response = await fetch('/api/settings');
+      const data = await response.json();
+      this.settings = data.settings || {};
+    } catch (error) {
+      console.error('設定の読み込みに失敗しました:', error);
+      this.settings = {};
+    }
+  }
+
+  async loadHolidays() {
+    try {
+      const response = await fetch('/api/holidays');
+      const data = await response.json();
+      this.holidays = data.holidays || [];
+    } catch (error) {
+      console.error('休日の読み込みに失敗しました:', error);
+      this.holidays = [];
     }
   }
 
@@ -597,6 +658,154 @@ class TaskCalendar {
     }
   }
 
+  // 設定モーダル関連
+  showSettingsModal() {
+    // 現在の設定値をフォームに設定
+    document.getElementById('bufferMinutes').value = this.settings.buffer_minutes || '0';
+    document.getElementById('workStartHour').value = this.settings.work_start_hour || '9';
+    document.getElementById('workEndHour').value = this.settings.work_end_hour || '18';
+    
+    this.renderHolidayList();
+    document.getElementById('settingsModal').classList.remove('hidden');
+  }
+
+  hideSettingsModal() {
+    document.getElementById('settingsModal').classList.add('hidden');
+    // フォームをリセット
+    document.getElementById('holidayDate').value = '';
+    document.getElementById('holidayName').value = '';
+    document.getElementById('isRecurring').checked = false;
+  }
+
+  async saveSettings() {
+    try {
+      const newSettings = {
+        buffer_minutes: document.getElementById('bufferMinutes').value,
+        work_start_hour: document.getElementById('workStartHour').value,
+        work_end_hour: document.getElementById('workEndHour').value
+      };
+
+      const response = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(newSettings)
+      });
+
+      if (response.ok) {
+        await this.loadSettings();
+        this.hideSettingsModal();
+        alert('✅ 設定が保存されました！既存のタスクを再スケジュールしますか？');
+        
+        if (confirm('既存のタスクを新しい設定で再スケジュールしますか？')) {
+          await this.rescheduleAllTasks();
+        }
+      } else {
+        alert('❌ 設定の保存に失敗しました');
+      }
+    } catch (error) {
+      console.error('設定保存エラー:', error);
+      alert('❌ エラーが発生しました');
+    }
+  }
+
+  async addHoliday() {
+    const holidayDate = document.getElementById('holidayDate').value;
+    const holidayName = document.getElementById('holidayName').value;
+    const isRecurring = document.getElementById('isRecurring').checked;
+
+    if (!holidayDate) {
+      alert('日付を選択してください');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/holidays', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          holiday_date: holidayDate,
+          holiday_name: holidayName,
+          is_recurring: isRecurring
+        })
+      });
+
+      if (response.ok) {
+        await this.loadHolidays();
+        this.renderHolidayList();
+        this.renderCalendar(); // カレンダーを更新
+        
+        // フォームをクリア
+        document.getElementById('holidayDate').value = '';
+        document.getElementById('holidayName').value = '';
+        document.getElementById('isRecurring').checked = false;
+        
+        alert('✅ 休日が追加されました！');
+      } else {
+        alert('❌ 休日の追加に失敗しました');
+      }
+    } catch (error) {
+      console.error('休日追加エラー:', error);
+      alert('❌ エラーが発生しました');
+    }
+  }
+
+  async deleteHoliday(holidayId) {
+    if (!confirm('この休日を削除しますか？')) return;
+
+    try {
+      const response = await fetch(`/api/holidays/${holidayId}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        await this.loadHolidays();
+        this.renderHolidayList();
+        this.renderCalendar(); // カレンダーを更新
+        alert('✅ 休日が削除されました');
+      } else {
+        alert('❌ 休日の削除に失敗しました');
+      }
+    } catch (error) {
+      console.error('休日削除エラー:', error);
+      alert('❌ エラーが発生しました');
+    }
+  }
+
+  renderHolidayList() {
+    const holidayListElement = document.getElementById('holidayList');
+    
+    if (this.holidays.length === 0) {
+      holidayListElement.innerHTML = '<p class="text-gray-500 text-sm">設定された休日はありません</p>';
+      return;
+    }
+
+    let html = '<div class="space-y-2">';
+    this.holidays.forEach(holiday => {
+      const date = new Date(holiday.holiday_date);
+      const dateStr = `${date.getMonth() + 1}/${date.getDate()}`;
+      const yearStr = holiday.is_recurring ? '（毎年）' : `（${date.getFullYear()}年）`;
+      
+      html += `
+        <div class="flex justify-between items-center bg-gray-50 p-2 rounded">
+          <div class="flex-1">
+            <span class="font-medium">${dateStr}</span>
+            <span class="text-sm text-gray-600 ml-2">${holiday.holiday_name || '休日'}${yearStr}</span>
+          </div>
+          <button onclick="app.deleteHoliday(${holiday.id})" class="text-red-600 hover:text-red-800 text-sm">
+            削除
+          </button>
+        </div>
+      `;
+    });
+    html += '</div>';
+
+    holidayListElement.innerHTML = html;
+  }
+
   getPriorityIcon(priority) {
     switch (priority) {
       case '高い': return '🔴';
@@ -618,6 +827,25 @@ class TaskCalendar {
   formatDate(dateStr) {
     const date = new Date(dateStr);
     return `${date.getMonth() + 1}/${date.getDate()}`;
+  }
+
+  isHoliday(dateStr) {
+    const date = new Date(dateStr);
+    
+    return this.holidays.some(holiday => {
+      if (holiday.holiday_date === dateStr) {
+        return true;
+      }
+      
+      // 毎年繰り返す休日の場合
+      if (holiday.is_recurring) {
+        const holidayDate = new Date(holiday.holiday_date);
+        return holidayDate.getMonth() === date.getMonth() && 
+               holidayDate.getDate() === date.getDate();
+      }
+      
+      return false;
+    });
   }
 }
 

@@ -6,5 +6,13 @@ INSERT OR IGNORE INTO tasks (name, priority, deadline, estimated_duration, statu
   ('データ分析', '低い', '2025-09-05', 240, 'pending'),
   ('メール返信', '中', '2025-08-22', 30, 'pending');
 
+-- テスト用休日データ
+INSERT OR IGNORE INTO holidays (holiday_date, holiday_name, is_recurring) VALUES 
+  ('2025-08-24', '夏休み', FALSE),
+  ('2025-12-25', 'クリスマス', TRUE),
+  ('2025-01-01', '元日', TRUE);
+
 -- 確認用クエリ（コメントアウト）
 -- SELECT * FROM tasks ORDER BY deadline;
+-- SELECT * FROM settings;
+-- SELECT * FROM holidays;

@@ -69,7 +69,22 @@ app.post('/api/tasks', async (c) => {
 // 自動スケジューリング関数
 async function autoScheduleTask(db: D1Database, taskId: number, task: any) {
   try {
-    // 1. 期限から3日前までの期間を計算
+    // 1. 設定値を取得
+    const { results: settingsResults } = await db.prepare(`
+      SELECT setting_key, setting_value FROM settings
+    `).all()
+    
+    const settings = {}
+    settingsResults.forEach(row => {
+      settings[row.setting_key] = row.setting_value
+    })
+    
+    const bufferMinutes = parseInt(settings.buffer_minutes || '0')
+    const defaultTaskBuffer = parseInt(settings.default_task_buffer || '30')
+    const workStart = parseInt(settings.work_start_hour || '9')
+    const workEnd = parseInt(settings.work_end_hour || '18')
+    
+    // 2. 期限から3日前までの期間を計算
     const deadline = new Date(task.deadline)
     const startDate = new Date()
     const endDate = new Date(deadline)
@@ -80,15 +95,15 @@ async function autoScheduleTask(db: D1Database, taskId: number, task: any) {
       endDate.setTime(deadline.getTime())
     }
     
-    // 2. 作業時間を計算（所要時間 + 30分バッファ）
-    const totalMinutes = task.estimated_duration + 30
+    // 3. 作業時間を計算（所要時間 + タスクバッファ + 1日バッファ）
+    const totalMinutes = task.estimated_duration + defaultTaskBuffer + bufferMinutes
     
-    // 3. 利用可能な時間スロットを検索（9:00-18:00の間）
-    const workingHours = { start: 9, end: 18 }
+    // 4. 利用可能な時間スロットを検索（設定された時間内）
+    const workingHours = { start: workStart, end: workEnd }
     const timeSlot = await findAvailableTimeSlot(db, startDate, endDate, totalMinutes, workingHours)
     
     if (timeSlot) {
-      // 4. スケジュールに登録
+      // 5. スケジュールに登録
       await db.prepare(`
         INSERT INTO schedules (task_id, scheduled_date, start_time, end_time, duration_minutes)
         VALUES (?, ?, ?, ?, ?)
@@ -109,14 +124,42 @@ async function autoScheduleTask(db: D1Database, taskId: number, task: any) {
 async function findAvailableTimeSlot(db: D1Database, startDate: Date, endDate: Date, durationMinutes: number, workingHours: any) {
   const currentDate = new Date(startDate)
   
+  // 休日データを取得
+  const { results: holidays } = await db.prepare(`
+    SELECT holiday_date, is_recurring FROM holidays
+  `).all()
+  
+  const holidayDates = new Set()
+  holidays.forEach(holiday => {
+    holidayDates.add(holiday.holiday_date)
+    
+    // 毎年繰り返す休日の場合
+    if (holiday.is_recurring) {
+      const holidayDate = new Date(holiday.holiday_date)
+      const currentYear = currentDate.getFullYear()
+      
+      // 今年と来年の同日を追加
+      for (let year = currentYear; year <= currentYear + 1; year++) {
+        const recurringDate = new Date(year, holidayDate.getMonth(), holidayDate.getDate())
+        holidayDates.add(recurringDate.toISOString().split('T')[0])
+      }
+    }
+  })
+  
   while (currentDate <= endDate) {
+    const dateStr = currentDate.toISOString().split('T')[0]
+    
     // 土日をスキップ
     if (currentDate.getDay() === 0 || currentDate.getDay() === 6) {
       currentDate.setDate(currentDate.getDate() + 1)
       continue
     }
     
-    const dateStr = currentDate.toISOString().split('T')[0]
+    // カスタム休日をスキップ
+    if (holidayDates.has(dateStr)) {
+      currentDate.setDate(currentDate.getDate() + 1)
+      continue
+    }
     
     // その日の既存スケジュールを取得
     const { results: existingSchedules } = await db.prepare(`
@@ -451,6 +494,99 @@ app.post('/api/tasks/:id/complete', async (c) => {
   }
 })
 
+// 設定API - 設定値取得
+app.get('/api/settings', async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare(`
+      SELECT setting_key, setting_value FROM settings
+    `).all()
+    
+    const settings = {}
+    results.forEach(row => {
+      settings[row.setting_key] = row.setting_value
+    })
+    
+    return c.json({ settings })
+  } catch (error) {
+    return c.json({ error: 'Failed to fetch settings' }, 500)
+  }
+})
+
+// 設定API - 設定値更新
+app.put('/api/settings', async (c) => {
+  try {
+    const settingsData = await c.req.json()
+    
+    for (const [key, value] of Object.entries(settingsData)) {
+      await c.env.DB.prepare(`
+        INSERT OR REPLACE INTO settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+      `).bind(key, value.toString()).run()
+    }
+    
+    return c.json({ message: 'Settings updated successfully' })
+  } catch (error) {
+    return c.json({ error: 'Failed to update settings' }, 500)
+  }
+})
+
+// 休日API - 休日一覧取得
+app.get('/api/holidays', async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare(`
+      SELECT * FROM holidays ORDER BY holiday_date
+    `).all()
+    
+    return c.json({ holidays: results })
+  } catch (error) {
+    return c.json({ error: 'Failed to fetch holidays' }, 500)
+  }
+})
+
+// 休日API - 休日追加
+app.post('/api/holidays', async (c) => {
+  try {
+    const { holiday_date, holiday_name, is_recurring } = await c.req.json()
+    
+    const result = await c.env.DB.prepare(`
+      INSERT INTO holidays (holiday_date, holiday_name, is_recurring)
+      VALUES (?, ?, ?)
+    `).bind(holiday_date, holiday_name || '', is_recurring || false).run()
+    
+    if (result.success) {
+      return c.json({ 
+        id: result.meta.last_row_id,
+        holiday_date,
+        holiday_name,
+        is_recurring
+      })
+    } else {
+      return c.json({ error: 'Failed to add holiday' }, 500)
+    }
+  } catch (error) {
+    return c.json({ error: 'Failed to add holiday' }, 400)
+  }
+})
+
+// 休日API - 休日削除
+app.delete('/api/holidays/:id', async (c) => {
+  try {
+    const id = c.req.param('id')
+    
+    const result = await c.env.DB.prepare(`
+      DELETE FROM holidays WHERE id = ?
+    `).bind(id).run()
+    
+    if (result.success) {
+      return c.json({ message: 'Holiday deleted successfully' })
+    } else {
+      return c.json({ error: 'Holiday not found' }, 404)
+    }
+  } catch (error) {
+    return c.json({ error: 'Failed to delete holiday' }, 500)
+  }
+})
+
 // メインページ
 app.get('/', (c) => {
   return c.render(
@@ -460,7 +596,7 @@ app.get('/', (c) => {
           <h1 className="text-2xl font-bold text-center">📅 タスクカレンダー</h1>
           <p className="text-center text-blue-100 mt-1">自動スケジューリング機能付きタスク管理</p>
           <div className="text-center text-xs text-blue-200 mt-2">
-            🟢スケジュール済み ⚪未スケジュール 優先度で自動配置
+            🟢スケジュール済み ⚪未スケジュール 🚫休日 優先度で自動配置
           </div>
         </header>
         
@@ -485,13 +621,21 @@ app.get('/', (c) => {
             </div>
           </div>
           
-          {/* タスク追加ボタン */}
-          <button 
-            id="addTaskBtn" 
-            className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg font-semibold shadow-md hover:bg-blue-700 transition-colors mb-6"
-          >
-            ➕ 新しいタスクを追加
-          </button>
+          {/* ボタンエリア */}
+          <div className="space-y-3 mb-6">
+            <button 
+              id="addTaskBtn" 
+              className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg font-semibold shadow-md hover:bg-blue-700 transition-colors"
+            >
+              ➕ 新しいタスクを追加
+            </button>
+            <button 
+              id="settingsBtn" 
+              className="w-full bg-gray-600 text-white py-2 px-6 rounded-lg font-semibold shadow-md hover:bg-gray-700 transition-colors"
+            >
+              ⚙️ 設定（バッファ・休日）
+            </button>
+          </div>
           
           {/* タスクリスト */}
           <div className="bg-white rounded-lg shadow-md">
@@ -575,6 +719,124 @@ app.get('/', (c) => {
           </div>
         </div>
         
+        {/* 設定モーダル */}
+        <div id="settingsModal" className="fixed inset-0 bg-black bg-opacity-50 hidden z-50">
+          <div className="flex items-center justify-center min-h-screen p-4">
+            <div className="bg-white rounded-lg w-full max-w-md max-h-96 overflow-y-auto">
+              <div className="p-4 border-b sticky top-0 bg-white">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-lg font-semibold">⚙️ 設定</h3>
+                  <button id="closeSettingsModal" className="text-gray-500 hover:text-gray-700">
+                    ✕
+                  </button>
+                </div>
+              </div>
+              <div className="p-4 space-y-6">
+                {/* バッファ設定 */}
+                <div>
+                  <h4 className="font-semibold mb-3">⏰ 時間設定</h4>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">1日の追加バッファ時間（分）:</label>
+                      <input 
+                        type="number" 
+                        id="bufferMinutes" 
+                        min="0" 
+                        className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        placeholder="例：30"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">全タスクにこの分数が追加されます</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm font-medium mb-1">作業開始時間:</label>
+                        <select 
+                          id="workStartHour" 
+                          className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
+                          <option value="6">6:00</option>
+                          <option value="7">7:00</option>
+                          <option value="8">8:00</option>
+                          <option value="9">9:00</option>
+                          <option value="10">10:00</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1">作業終了時間:</label>
+                        <select 
+                          id="workEndHour" 
+                          className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
+                          <option value="16">16:00</option>
+                          <option value="17">17:00</option>
+                          <option value="18">18:00</option>
+                          <option value="19">19:00</option>
+                          <option value="20">20:00</option>
+                          <option value="21">21:00</option>
+                          <option value="22">22:00</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                
+                {/* 休日設定 */}
+                <div>
+                  <h4 className="font-semibold mb-3">📅 休日設定</h4>
+                  <div className="space-y-3">
+                    <div className="flex space-x-2">
+                      <input 
+                        type="date" 
+                        id="holidayDate" 
+                        className="flex-1 border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                      <button 
+                        id="addHolidayBtn" 
+                        className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors"
+                      >
+                        追加
+                      </button>
+                    </div>
+                    <div>
+                      <input 
+                        type="text" 
+                        id="holidayName" 
+                        placeholder="休日名（任意）" 
+                        className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+                    <div>
+                      <label className="flex items-center">
+                        <input type="checkbox" id="isRecurring" className="mr-2" />
+                        <span className="text-sm">毎年繰り返す</span>
+                      </label>
+                    </div>
+                    <div id="holidayList" className="max-h-32 overflow-y-auto">
+                      {/* 休日リストはJavaScriptで生成 */}
+                    </div>
+                  </div>
+                </div>
+                
+                {/* 保存ボタン */}
+                <div className="flex space-x-3 pt-4 border-t">
+                  <button 
+                    id="saveSettingsBtn" 
+                    className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    💾 保存
+                  </button>
+                  <button 
+                    id="cancelSettingsBtn" 
+                    className="flex-1 bg-gray-500 text-white py-2 px-4 rounded-lg hover:bg-gray-600 transition-colors"
+                  >
+                    キャンセル
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* ストップウォッチモーダル */}
         <div id="stopwatchModal" className="fixed inset-0 bg-black bg-opacity-50 hidden z-50">
           <div className="flex items-center justify-center min-h-screen p-4">
