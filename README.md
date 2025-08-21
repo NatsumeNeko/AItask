@@ -6,8 +6,9 @@
 **対象デバイス**: スマホブラウザメイン（レスポンシブデザイン）
 
 ## 🌐 アクセスURL
-- **メインアプリ**: https://3000-i8z6zy4n1rqx93wdvqupr-6532622b.e2b.dev
-- **API**: https://3000-i8z6zy4n1rqx93wdvqupr-6532622b.e2b.dev/api/tasks
+- **🚀 本番環境（Cloudflare Pages）**: https://task-calendar-1xu.pages.dev
+- **開発環境**: https://3000-i8z6zy4n1rqx93wdvqupr-6532622b.e2b.dev
+- **GitHub リポジトリ**: https://github.com/NatsumeNeko/AItask
 
 ## ✨ 完成機能（Phase 1-4 全完了）
 
@@ -104,25 +105,43 @@ schedules: id, task_id, scheduled_date, start_time, end_time, duration_minutes, 
 - **Development**: PM2 + Wrangler（開発環境管理）
 
 ### デプロイ状況
-- **ステータス**: ✅ アクティブ（ローカル開発環境）
+- **本番環境**: ✅ Cloudflare Pages デプロイ完了
+- **開発環境**: ✅ アクティブ（サンドボックス環境）
 - **最終更新**: 2025-08-21
-- **バックエンド**: Honoアプリ稼働中
-- **データベース**: D1ローカルDB正常動作
+- **バックエンド**: Hono + Cloudflare Workers
+- **データベース**: Cloudflare D1 本番DB稼働中
 - **フロントエンド**: レスポンシブUI完全対応
+- **GitHub**: ソースコード管理完了
 
 ### 開発コマンド
 ```bash
-# 開発サーバー起動
+# 開発サーバー起動（サンドボックス）
 npm run dev:sandbox
 
 # データベースマイグレーション  
-npm run db:migrate:local
+npm run db:migrate:local  # ローカル開発用
+npm run db:migrate:prod   # 本番環境用
 
 # テストデータ挿入
 npm run db:seed
 
 # 全タスク再スケジュール（API）
 curl -X POST http://localhost:3000/api/reschedule
+```
+
+### 本番デプロイコマンド
+```bash
+# Cloudflare Pages デプロイ
+npm run build
+npx wrangler pages deploy dist --project-name task-calendar
+
+# 本番データベースマイグレーション
+npx wrangler d1 migrations apply task-calendar-production --remote
+
+# GitHub プッシュ
+git add .
+git commit -m "Update message"
+git push origin main
 ```
 
 ## 🎯 達成された要件
