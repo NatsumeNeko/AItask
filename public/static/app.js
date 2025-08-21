@@ -22,11 +22,15 @@ class TaskCalendar {
 
   async init() {
     this.setupEventListeners();
-    this.renderCalendar();
+    
+    // データを先に読み込み
     await this.loadTasks();
     await this.loadSchedules();
     await this.loadSettings();
     await this.loadHolidays();
+    
+    // データ読み込み完了後にUI描画
+    this.renderCalendar();
     this.renderTaskList();
   }
 
@@ -122,6 +126,12 @@ class TaskCalendar {
   }
 
   renderCalendar() {
+    console.log('Rendering calendar with data:', { 
+      tasks: this.tasks.length, 
+      schedules: this.schedules.length, 
+      holidays: this.holidays.length 
+    });
+    
     const year = this.currentDate.getFullYear();
     const month = this.currentDate.getMonth();
     
@@ -152,7 +162,9 @@ class TaskCalendar {
       for (let day = 0; day < 7; day++) {
         const isCurrentMonth = currentDate.getMonth() === month;
         const isToday = this.isToday(currentDate);
-        const dateStr = currentDate.toISOString().split('T')[0];
+        const dateStr = currentDate.getFullYear() + '-' + 
+                      (currentDate.getMonth() + 1).toString().padStart(2, '0') + '-' + 
+                      currentDate.getDate().toString().padStart(2, '0');
         const tasksOnDay = this.getTasksForDate(dateStr);
 
         let cellClass = 'h-12 flex flex-col items-center justify-center cursor-pointer rounded transition-colors ';
@@ -162,13 +174,14 @@ class TaskCalendar {
           cellClass += 'text-gray-400 ';
         }
 
-        // 休日チェック
+        // 休日チェックとスケジュール確認
         const isHoliday = this.isHoliday(dateStr);
+        const schedulesOnDay = this.getSchedulesForDate(dateStr);
+        
         if (isHoliday && isCurrentMonth) {
           cellClass += 'bg-red-100 border border-red-300 text-red-700 '; // 休日
         } else {
           // タスクやスケジュールがある日は背景色を変更
-          const schedulesOnDay = this.getSchedulesForDate(dateStr);
           if (tasksOnDay.length > 0 || schedulesOnDay.length > 0) {
             if (schedulesOnDay.length > 0) {
               cellClass += 'bg-green-100 border border-green-300 '; // スケジュール済み
@@ -194,7 +207,10 @@ class TaskCalendar {
     }
 
     calendarHTML += '</div>';
-    document.getElementById('calendar').innerHTML = calendarHTML;
+    const calendarElement = document.getElementById('calendar');
+    calendarElement.innerHTML = calendarHTML;
+    
+    // カレンダー描画完了
   }
 
   async loadTasks() {
@@ -298,7 +314,9 @@ class TaskCalendar {
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
     const deadlineInput = document.querySelector('input[name="deadline"]');
-    deadlineInput.value = tomorrow.toISOString().split('T')[0];
+    deadlineInput.value = tomorrow.getFullYear() + '-' + 
+                      (tomorrow.getMonth() + 1).toString().padStart(2, '0') + '-' + 
+                      tomorrow.getDate().toString().padStart(2, '0');
     
     document.getElementById('taskModal').classList.remove('hidden');
   }
@@ -486,6 +504,13 @@ class TaskCalendar {
   isToday(date) {
     const today = new Date();
     return date.toDateString() === today.toDateString();
+  }
+
+  // 日付をYYYY-MM-DD形式に変換（タイムゾーン問題を避ける）
+  formatDateString(date) {
+    return date.getFullYear() + '-' + 
+           (date.getMonth() + 1).toString().padStart(2, '0') + '-' + 
+           date.getDate().toString().padStart(2, '0');
   }
 
   getTasksForDate(dateStr) {

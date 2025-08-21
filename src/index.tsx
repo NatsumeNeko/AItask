@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { serveStatic } from 'hono/cloudflare-workers'
 import { renderer } from './renderer'
 
 type Bindings = {
@@ -10,6 +11,9 @@ const app = new Hono<{ Bindings: Bindings }>()
 
 // CORS設定
 app.use('/api/*', cors())
+
+// 静的ファイル配信設定
+app.use('/static/*', serveStatic({ root: './public' }))
 
 // レンダラー設定
 app.use(renderer)
@@ -141,13 +145,13 @@ async function findAvailableTimeSlot(db: D1Database, startDate: Date, endDate: D
       // 今年と来年の同日を追加
       for (let year = currentYear; year <= currentYear + 1; year++) {
         const recurringDate = new Date(year, holidayDate.getMonth(), holidayDate.getDate())
-        holidayDates.add(recurringDate.toISOString().split('T')[0])
+        holidayDates.add(formatDateString(recurringDate))
       }
     }
   })
   
   while (currentDate <= endDate) {
-    const dateStr = currentDate.toISOString().split('T')[0]
+    const dateStr = formatDateString(currentDate)
     
     // 土日をスキップ
     if (currentDate.getDay() === 0 || currentDate.getDay() === 6) {
@@ -265,6 +269,13 @@ function minutesToTime(minutes: number): string {
   const hours = Math.floor(minutes / 60)
   const mins = minutes % 60
   return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`
+}
+
+// 日付をYYYY-MM-DD形式に変換（タイムゾーン問題を避ける）
+function formatDateString(date: Date): string {
+  return date.getFullYear() + '-' + 
+         (date.getMonth() + 1).toString().padStart(2, '0') + '-' + 
+         date.getDate().toString().padStart(2, '0');
 }
 
 app.put('/api/tasks/:id', async (c) => {
@@ -460,6 +471,118 @@ app.get('/api/schedules/:date', async (c) => {
   }
 })
 
+// ヘルパー関数: デイリーワークを全平日にスケジュール
+async function scheduleAllDailyWork(DB: D1Database) {
+  // 設定を取得
+  const { results: settingsRows } = await DB.prepare(`
+    SELECT setting_key, setting_value FROM settings
+  `).all()
+  
+  const settings = {}
+  settingsRows.forEach((row: any) => {
+    settings[row.setting_key] = row.setting_value
+  })
+  
+  const dailyWorkMinutes = parseInt(settings['daily_work_minutes'] || '0')
+  const workStartHour = parseInt(settings['work_start_hour'] || '9')
+  
+  if (dailyWorkMinutes <= 0) return // デイリーワークが設定されていない場合はスキップ
+  
+  // 休日を取得
+  const { results: holidays } = await DB.prepare(`
+    SELECT holiday_date, is_recurring FROM holidays
+  `).all()
+  
+  // 今日から30日間の平日にデイリーワークをスケジュール
+  const today = new Date()
+  for (let i = 0; i < 30; i++) {
+    const date = new Date(today)
+    date.setDate(today.getDate() + i)
+    const dateStr = formatDateString(date)
+    
+    // 土日をスキップ
+    if (date.getDay() === 0 || date.getDay() === 6) continue
+    
+    // 休日チェック
+    const isHoliday = holidays.some((holiday: any) => {
+      if (holiday.is_recurring) {
+        const holidayDate = new Date(holiday.holiday_date)
+        return holidayDate.getMonth() === date.getMonth() && 
+               holidayDate.getDate() === date.getDate()
+      }
+      return holiday.holiday_date === dateStr
+    })
+    
+    if (isHoliday) continue
+    
+    // デイリーワークをスケジュール
+    const startTime = `${workStartHour.toString().padStart(2, '0')}:00`
+    const endMinutes = workStartHour * 60 + dailyWorkMinutes
+    const endTime = minutesToTime(endMinutes)
+    
+    await DB.prepare(`
+      INSERT INTO schedules (task_id, scheduled_date, start_time, end_time, duration_minutes)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(-1, dateStr, startTime, endTime, dailyWorkMinutes).run()
+  }
+}
+
+// 休日に設定されたタスクを別の日に振り替える
+async function rescheduleHolidayTasks(DB: D1Database) {
+  // 休日データを取得
+  const { results: holidays } = await DB.prepare(`
+    SELECT holiday_date, is_recurring FROM holidays
+  `).all()
+  
+  const holidayDates = new Set()
+  holidays.forEach((holiday: any) => {
+    holidayDates.add(holiday.holiday_date)
+    
+    if (holiday.is_recurring) {
+      const holidayDate = new Date(holiday.holiday_date)
+      const currentYear = new Date().getFullYear()
+      
+      for (let year = currentYear; year <= currentYear + 1; year++) {
+        const recurringDate = new Date(year, holidayDate.getMonth(), holidayDate.getDate())
+        holidayDates.add(formatDateString(recurringDate))
+      }
+    }
+  })
+  
+  // 休日にスケジュールされているタスクを取得（デイリーワーク除く）
+  const { results: holidaySchedules } = await DB.prepare(`
+    SELECT s.*, t.name, t.priority, t.deadline, t.estimated_duration
+    FROM schedules s
+    LEFT JOIN tasks t ON s.task_id = t.id
+    WHERE s.task_id != -1 AND s.scheduled_date IN (${[...holidayDates].map(() => '?').join(',')})
+    ORDER BY 
+      CASE t.priority 
+        WHEN '高い' THEN 1 
+        WHEN '中' THEN 2 
+        WHEN '低い' THEN 3 
+      END,
+      t.deadline
+  `).bind(...Array.from(holidayDates)).all()
+  
+  // 休日のスケジュールを削除
+  if (holidaySchedules.length > 0) {
+    const scheduleIds = holidaySchedules.map((s: any) => s.id).join(',')
+    await DB.prepare(`DELETE FROM schedules WHERE id IN (${scheduleIds.split(',').map(() => '?').join(',')})`).bind(...holidaySchedules.map((s: any) => s.id)).run()
+    
+    // 各タスクを再スケジュール
+    for (const schedule of holidaySchedules) {
+      if (schedule.task_id && schedule.task_id !== -1) {
+        await autoScheduleTask(DB, schedule.task_id, {
+          name: schedule.name,
+          priority: schedule.priority,
+          deadline: schedule.deadline,
+          estimated_duration: schedule.duration_minutes
+        })
+      }
+    }
+  }
+}
+
 // 全タスクの再スケジューリング
 app.post('/api/reschedule', async (c) => {
   try {
@@ -487,6 +610,9 @@ app.post('/api/reschedule', async (c) => {
       await autoScheduleTask(c.env.DB, task.id, task)
     }
     
+    // 休日に設定されたタスクを振り替え
+    await rescheduleHolidayTasks(c.env.DB)
+    
     return c.json({ message: 'All tasks rescheduled successfully' })
   } catch (error) {
     console.error('Reschedule error:', error)
@@ -494,73 +620,7 @@ app.post('/api/reschedule', async (c) => {
   }
 })
 
-// 全ての平日にデイリーワークを配置
-async function scheduleAllDailyWork(db: D1Database) {
-  try {
-    // 設定を取得
-    const { results: settingsResults } = await db.prepare(`
-      SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('daily_work_minutes', 'work_start_hour')
-    `).all()
-    
-    const settings = {}
-    settingsResults.forEach(row => {
-      settings[row.setting_key] = row.setting_value
-    })
-    
-    const dailyWorkMinutes = parseInt(settings.daily_work_minutes || '0')
-    const workStart = parseInt(settings.work_start_hour || '8')
-    
-    if (dailyWorkMinutes <= 0) return
-    
-    // 休日データを取得
-    const { results: holidays } = await db.prepare(`
-      SELECT holiday_date, is_recurring FROM holidays
-    `).all()
-    
-    const holidayDates = new Set()
-    holidays.forEach(holiday => {
-      holidayDates.add(holiday.holiday_date)
-      
-      if (holiday.is_recurring) {
-        const holidayDate = new Date(holiday.holiday_date)
-        const currentYear = new Date().getFullYear()
-        
-        for (let year = currentYear; year <= currentYear + 1; year++) {
-          const recurringDate = new Date(year, holidayDate.getMonth(), holidayDate.getDate())
-          holidayDates.add(recurringDate.toISOString().split('T')[0])
-        }
-      }
-    })
-    
-    // 今日から14日間の平日にデイリーワークを配置（範囲を縮小）
-    const today = new Date()
-    for (let i = 0; i < 14; i++) {
-      const date = new Date(today)
-      date.setDate(date.getDate() + i)
-      const dateStr = date.toISOString().split('T')[0]
-      
-      // 土日と休日をスキップ
-      if (date.getDay() === 0 || date.getDay() === 6 || holidayDates.has(dateStr)) {
-        continue
-      }
-      
-      // デイリーワークを朝一番に配置
-      const startHour = workStart.toString().padStart(2, '0')
-      const startTime = `${startHour}:00`
-      const endMinutes = workStart * 60 + dailyWorkMinutes
-      const endHour = Math.floor(endMinutes / 60).toString().padStart(2, '0')
-      const endMin = (endMinutes % 60).toString().padStart(2, '0')
-      const endTime = `${endHour}:${endMin}`
-      
-      await db.prepare(`
-        INSERT INTO schedules (task_id, scheduled_date, start_time, end_time, duration_minutes)
-        VALUES (?, ?, ?, ?, ?)
-      `).bind(-1, dateStr, startTime, endTime, dailyWorkMinutes).run()
-    }
-  } catch (error) {
-    console.error('Daily work scheduling error:', error)
-  }
-}
+
 
 // ストップウォッチ - タスク開始
 app.post('/api/tasks/:id/start', async (c) => {
@@ -683,6 +743,9 @@ app.post('/api/holidays', async (c) => {
     `).bind(holiday_date, holiday_name || '', is_recurring || false).run()
     
     if (result.success) {
+      // 休日に設定された日のタスクを別の日に振り替え
+      await rescheduleHolidayTasks(c.env.DB)
+      
       return c.json({ 
         id: result.meta.last_row_id,
         holiday_date,
