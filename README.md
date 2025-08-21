@@ -6,11 +6,11 @@
 **対象デバイス**: スマホブラウザメイン（レスポンシブデザイン）
 
 ## 🌐 アクセスURL
-- **🚀 本番環境（Cloudflare Pages）**: https://task-calendar-1xu.pages.dev
+- **🚀 本番環境（Cloudflare Pages）**: https://117bddad.task-calendar-1xu.pages.dev
 - **開発環境**: https://3000-i8z6zy4n1rqx93wdvqupr-6532622b.e2b.dev
 - **GitHub リポジトリ**: https://github.com/NatsumeNeko/AItask
 
-## ✨ 完成機能（Phase 1-4 全完了）
+## ✨ 完成機能（Phase 1-5 全完了）
 
 ### Phase 1: MVP（基本機能）✅
 - ✅ **モバイル対応カレンダー**: 月次ビューでスマホ最適化
@@ -34,7 +34,7 @@
 - ✅ **リアルタイム調整**: 超過時間に基づく後続タスクの自動調整
 - ✅ **スケジュール移動**: 時間不足時の翌日以降への自動移動
 
-### Phase 4: 高度な設定機能✅ **NEW!**
+### Phase 4: 高度な設定機能✅
 - ✅ **バッファ時間設定**: 1日の追加バッファ時間をカスタマイズ可能
 - ✅ **作業時間設定**: 開始時間・終了時間の柔軟な設定
 - ✅ **休日設定**: カスタム休日の登録・管理機能
@@ -42,28 +42,45 @@
 - ✅ **休日スケジュール回避**: 休日にはタスクを自動配置しない
 - ✅ **設定保存・読み込み**: 永続的な設定管理
 
+### Phase 5: インタラクティブUI機能✅ **NEW!**
+- ✅ **チェックボックス方式タスク管理**: 直感的なタスク完了操作
+- ✅ **ドラッグ&ドロップ機能**: デスクトップとモバイル対応の順序変更
+- ✅ **インライン編集機能**: タスクの直接編集・保存・キャンセル
+- ✅ **タッチ操作対応**: モバイルデバイスでのスムーズな操作
+- ✅ **動的スケジューリング開始日**: 17時以降は翌日からスケジュール開始
+- ✅ **タスク順序とカレンダー連携**: ドラッグ&ドロップでスケジュール順序も変更
+
 ## 🏗️ データアーキテクチャ
 
 ### ストレージサービス
 - **メインDB**: Cloudflare D1（SQLiteベース）
 - **テーブル構造**:
-  - `tasks`: タスク基本情報（名前、優先度、期限、所要時間、実績時間、ステータス）
+  - `tasks`: タスク基本情報（名前、優先度、期限、所要時間、実績時間、ステータス、表示順序）
   - `schedules`: スケジュール配置情報（日付、開始・終了時間、タスク関連）
+  - `settings`: 設定情報（バッファ時間、作業時間、デイリーワーク）
+  - `holidays`: 休日情報（日付、名前、繰り返し設定）
 
 ### データモデル
 ```sql
 -- タスク（メイン情報）
-tasks: id, name, priority, deadline, estimated_duration, actual_duration, status, created_at, updated_at
+tasks: id, name, priority, deadline, estimated_duration, actual_duration, status, display_order, created_at, updated_at
 
 -- スケジュール（カレンダー配置）
 schedules: id, task_id, scheduled_date, start_time, end_time, duration_minutes, created_at
+
+-- 設定情報
+settings: id, setting_key, setting_value, created_at, updated_at
+
+-- 休日情報
+holidays: id, holiday_date, holiday_name, is_recurring, created_at
 ```
 
 ### 優先度アルゴリズム
-1. **重要度高 + 期限近** → 最優先
-2. **期限近** → 次優先  
-3. **重要度中 + 期限余裕** → 第3優先
-4. **重要度低 + 期限余裕** → 最低優先
+1. **ユーザー定義順序（display_order）** → 最優先
+2. **重要度高 + 期限近** → 次優先
+3. **期限近** → 第3優先  
+4. **重要度中 + 期限余裕** → 第4優先
+5. **重要度低 + 期限余裕** → 最低優先
 
 ## 📱 ユーザーガイド
 
@@ -75,12 +92,21 @@ schedules: id, task_id, scheduled_date, start_time, end_time, duration_minutes, 
 5. **タスク実行**: ⏱️開始ボタンでストップウォッチ機能起動
 6. **完了処理**: 作業完了時に実績時間を自動記録
 
+### インタラクティブ操作（NEW!）
+- **チェックボックス**: タスクのチェックボックスでクリック完了操作
+- **ドラッグ&ドロップ**: ≡ハンドルを使ってタスク順序を変更
+  - **デスクトップ**: マウスドラッグで順序変更
+  - **モバイル**: タッチドラッグで順序変更
+- **インライン編集**: タスク名をクリックしてその場で編集
+- **順序変更の反映**: タスク順序変更がカレンダーのスケジュール順序にも自動反映
+
 ### 高度な機能
 - **再スケジューリング**: 「全タスクを再スケジュール」で一括最適化
 - **時間超過対応**: 想定時間オーバー時の自動スケジュール調整
 - **優先度変更**: 重要度変更で自動再配置
+- **動的開始日**: 17時以降のタスク追加は翌日からスケジュール開始
 
-### 設定機能（NEW!）
+### 設定機能
 - **⚙️設定ボタン**: バッファ時間と休日の詳細設定
 - **バッファ調整**: 1日の追加バッファ時間設定（例：15分追加）
 - **作業時間変更**: 8:00-19:00など柔軟な時間設定
@@ -163,12 +189,25 @@ git push origin main
 - **一時停止・再開**: 柔軟な作業管理
 - **視覚的フィードバック**: カラーコード化された状態表示
 - **エラーハンドリング**: 堅牢なAPI設計
+- **ドラッグ&ドロップUI**: 直感的なタスク順序変更
+- **動的スケジューリング**: 時間に応じた開始日調整
+- **インライン編集**: タスクの直接編集機能
 
 ## 🏆 プロジェクト評価
 
 **完成度**: 100% - 全フェーズ完了  
 **機能充実度**: 当初要件を大幅に上回る機能実装  
 **技術品質**: 現代的なエッジコンピューティング技術活用  
-**ユーザビリティ**: スマホ最適化とリアルタイム応答性能
+**ユーザビリティ**: スマホ最適化とリアルタイム応答性能  
+**インタラクティブ性**: 直感的なドラッグ&ドロップとタッチ操作対応
 
 このタスクカレンダーは、単純なタスク管理を超えた「インテリジェントなスケジューリングアシスタント」として完成しました。🎉
+
+## 📋 参考資料
+
+**実装根拠となる参考URL:**
+- [Cloudflare Workers Documentation](https://developers.cloudflare.com/workers/)
+- [Hono Framework Documentation](https://hono.dev/)
+- [Cloudflare D1 Database Documentation](https://developers.cloudflare.com/d1/)
+- [HTML5 Drag and Drop API](https://developer.mozilla.org/en-US/docs/Web/API/HTML_Drag_and_Drop_API)
+- [Touch Events Documentation](https://developer.mozilla.org/en-US/docs/Web/API/Touch_events)
