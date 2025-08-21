@@ -161,7 +161,10 @@ async function findAvailableTimeSlot(db: D1Database, startDate: Date, endDate: D
       continue
     }
     
-    // その日の既存スケジュールを取得
+    // デイリーワークスケジュールを追加（まだ追加されていない場合）
+    await ensureDailyWorkSchedule(db, dateStr, workingHours)
+    
+    // その日の既存スケジュールを取得（デイリーワーク含む）
     const { results: existingSchedules } = await db.prepare(`
       SELECT start_time, end_time FROM schedules 
       WHERE scheduled_date = ? 
@@ -183,6 +186,36 @@ async function findAvailableTimeSlot(db: D1Database, startDate: Date, endDate: D
   }
   
   return null
+}
+
+// デイリーワークスケジュールを確実に追加
+async function ensureDailyWorkSchedule(db: D1Database, dateStr: string, workingHours: any) {
+  // 設定からデイリーワーク時間を取得
+  const { results: settingsResults } = await db.prepare(`
+    SELECT setting_value FROM settings WHERE setting_key = ?
+  `).bind('daily_work_minutes').all()
+  
+  const dailyWorkMinutes = parseInt(settingsResults[0]?.setting_value || '0')
+  
+  if (dailyWorkMinutes <= 0) return
+  
+  // その日にデイリーワークが既に存在するかチェック
+  const { results: existingDaily } = await db.prepare(`
+    SELECT id FROM schedules 
+    WHERE scheduled_date = ? AND task_id = -1
+  `).bind(dateStr).all()
+  
+  if (existingDaily.length > 0) return // 既に存在
+  
+  // デイリーワークを朝一番に配置
+  const startTime = minutesToTime(workingHours.start * 60)
+  const endTime = minutesToTime(workingHours.start * 60 + dailyWorkMinutes)
+  
+  // デイリーワーク用の特別なタスクID (-1) でスケジュール追加
+  await db.prepare(`
+    INSERT INTO schedules (task_id, scheduled_date, start_time, end_time, duration_minutes)
+    VALUES (?, ?, ?, ?, ?)
+  `).bind(-1, dateStr, startTime, endTime, dailyWorkMinutes).run()
 }
 
 // 1日の中で利用可能な時間スロットを検索
@@ -361,12 +394,24 @@ app.get('/api/schedules', async (c) => {
         s.start_time,
         s.end_time,
         s.duration_minutes,
-        t.id as task_id,
-        t.name as task_name,
-        t.priority,
-        t.status
+        CASE 
+          WHEN s.task_id = -1 THEN -1
+          ELSE t.id 
+        END as task_id,
+        CASE 
+          WHEN s.task_id = -1 THEN 'デイリーワーク'
+          ELSE t.name 
+        END as task_name,
+        CASE 
+          WHEN s.task_id = -1 THEN '中'
+          ELSE t.priority 
+        END as priority,
+        CASE 
+          WHEN s.task_id = -1 THEN 'daily'
+          ELSE t.status 
+        END as status
       FROM schedules s
-      JOIN tasks t ON s.task_id = t.id
+      LEFT JOIN tasks t ON s.task_id = t.id
       ORDER BY s.scheduled_date, s.start_time
     `).all()
     
@@ -387,12 +432,24 @@ app.get('/api/schedules/:date', async (c) => {
         s.start_time,
         s.end_time,
         s.duration_minutes,
-        t.id as task_id,
-        t.name as task_name,
-        t.priority,
-        t.status
+        CASE 
+          WHEN s.task_id = -1 THEN -1
+          ELSE t.id 
+        END as task_id,
+        CASE 
+          WHEN s.task_id = -1 THEN 'デイリーワーク'
+          ELSE t.name 
+        END as task_name,
+        CASE 
+          WHEN s.task_id = -1 THEN '中'
+          ELSE t.priority 
+        END as priority,
+        CASE 
+          WHEN s.task_id = -1 THEN 'daily'
+          ELSE t.status 
+        END as status
       FROM schedules s
-      JOIN tasks t ON s.task_id = t.id
+      LEFT JOIN tasks t ON s.task_id = t.id
       WHERE s.scheduled_date = ?
       ORDER BY s.start_time
     `).bind(date).all()
@@ -408,6 +465,9 @@ app.post('/api/reschedule', async (c) => {
   try {
     // 既存のスケジュールをクリア
     await c.env.DB.prepare(`DELETE FROM schedules`).run()
+    
+    // デイリーワークを全ての平日に事前配置
+    await scheduleAllDailyWork(c.env.DB)
     
     // 未完了のタスクを優先度順で取得
     const { results: tasks } = await c.env.DB.prepare(`
@@ -429,9 +489,78 @@ app.post('/api/reschedule', async (c) => {
     
     return c.json({ message: 'All tasks rescheduled successfully' })
   } catch (error) {
-    return c.json({ error: 'Failed to reschedule tasks' }, 500)
+    console.error('Reschedule error:', error)
+    return c.json({ error: `Failed to reschedule tasks: ${error.message}` }, 500)
   }
 })
+
+// 全ての平日にデイリーワークを配置
+async function scheduleAllDailyWork(db: D1Database) {
+  try {
+    // 設定を取得
+    const { results: settingsResults } = await db.prepare(`
+      SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('daily_work_minutes', 'work_start_hour')
+    `).all()
+    
+    const settings = {}
+    settingsResults.forEach(row => {
+      settings[row.setting_key] = row.setting_value
+    })
+    
+    const dailyWorkMinutes = parseInt(settings.daily_work_minutes || '0')
+    const workStart = parseInt(settings.work_start_hour || '8')
+    
+    if (dailyWorkMinutes <= 0) return
+    
+    // 休日データを取得
+    const { results: holidays } = await db.prepare(`
+      SELECT holiday_date, is_recurring FROM holidays
+    `).all()
+    
+    const holidayDates = new Set()
+    holidays.forEach(holiday => {
+      holidayDates.add(holiday.holiday_date)
+      
+      if (holiday.is_recurring) {
+        const holidayDate = new Date(holiday.holiday_date)
+        const currentYear = new Date().getFullYear()
+        
+        for (let year = currentYear; year <= currentYear + 1; year++) {
+          const recurringDate = new Date(year, holidayDate.getMonth(), holidayDate.getDate())
+          holidayDates.add(recurringDate.toISOString().split('T')[0])
+        }
+      }
+    })
+    
+    // 今日から14日間の平日にデイリーワークを配置（範囲を縮小）
+    const today = new Date()
+    for (let i = 0; i < 14; i++) {
+      const date = new Date(today)
+      date.setDate(date.getDate() + i)
+      const dateStr = date.toISOString().split('T')[0]
+      
+      // 土日と休日をスキップ
+      if (date.getDay() === 0 || date.getDay() === 6 || holidayDates.has(dateStr)) {
+        continue
+      }
+      
+      // デイリーワークを朝一番に配置
+      const startHour = workStart.toString().padStart(2, '0')
+      const startTime = `${startHour}:00`
+      const endMinutes = workStart * 60 + dailyWorkMinutes
+      const endHour = Math.floor(endMinutes / 60).toString().padStart(2, '0')
+      const endMin = (endMinutes % 60).toString().padStart(2, '0')
+      const endTime = `${endHour}:${endMin}`
+      
+      await db.prepare(`
+        INSERT INTO schedules (task_id, scheduled_date, start_time, end_time, duration_minutes)
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(-1, dateStr, startTime, endTime, dailyWorkMinutes).run()
+    }
+  } catch (error) {
+    console.error('Daily work scheduling error:', error)
+  }
+}
 
 // ストップウォッチ - タスク開始
 app.post('/api/tasks/:id/start', async (c) => {
@@ -746,6 +875,17 @@ app.get('/', (c) => {
                         placeholder="例：30"
                       />
                       <p className="text-xs text-gray-500 mt-1">全タスクにこの分数が追加されます</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">デイリーワーク時間（分）:</label>
+                      <input 
+                        type="number" 
+                        id="dailyWorkMinutes" 
+                        min="0" 
+                        className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        placeholder="例：30"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">毎日（休日以外）自動で確保される作業時間</p>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div>

@@ -412,15 +412,18 @@ class TaskCalendar {
       content += '<div class="mb-4"><h4 class="font-semibold text-green-600 mb-2">📅 スケジュール済み</h4><div class="space-y-2">';
       schedulesOnDay.forEach(schedule => {
         const priorityIcon = this.getPriorityIcon(schedule.priority);
+        const isDailyWork = schedule.status === 'daily';
+        const bgColor = isDailyWork ? 'bg-blue-50 border-blue-200' : 'bg-green-50 border-green-200';
+        const textColor = isDailyWork ? 'text-blue-600' : 'text-green-600';
         
         content += `
-          <div class="border border-green-200 rounded-lg p-3 bg-green-50">
+          <div class="border rounded-lg p-3 ${bgColor}">
             <div class="flex justify-between items-start">
-              <h5 class="font-semibold text-sm">${schedule.task_name}</h5>
-              <span class="text-xs text-green-600">${schedule.start_time}-${schedule.end_time}</span>
+              <h5 class="font-semibold text-sm ${isDailyWork ? 'text-blue-700' : ''}">${schedule.task_name}</h5>
+              <span class="text-xs ${textColor}">${schedule.start_time}-${schedule.end_time}</span>
             </div>
             <div class="flex items-center space-x-2 mt-1 text-xs text-gray-600">
-              <span>${priorityIcon} ${schedule.priority}</span>
+              <span>${isDailyWork ? '🔄' : priorityIcon} ${isDailyWork ? 'デイリー' : schedule.priority}</span>
               <span>⏱️ ${schedule.duration_minutes}分</span>
             </div>
           </div>
@@ -662,6 +665,7 @@ class TaskCalendar {
   showSettingsModal() {
     // 現在の設定値をフォームに設定
     document.getElementById('bufferMinutes').value = this.settings.buffer_minutes || '0';
+    document.getElementById('dailyWorkMinutes').value = this.settings.daily_work_minutes || '0';
     document.getElementById('workStartHour').value = this.settings.work_start_hour || '9';
     document.getElementById('workEndHour').value = this.settings.work_end_hour || '18';
     
@@ -681,6 +685,7 @@ class TaskCalendar {
     try {
       const newSettings = {
         buffer_minutes: document.getElementById('bufferMinutes').value,
+        daily_work_minutes: document.getElementById('dailyWorkMinutes').value,
         work_start_hour: document.getElementById('workStartHour').value,
         work_end_hour: document.getElementById('workEndHour').value
       };
